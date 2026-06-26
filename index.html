@@ -1,0 +1,1109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>FRED Data Explorer — Baird</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --navy: #1a3668; --navy-lt: #2a4f8e; --bg: #f5f6f9; --panel: #fff;
+      --border: #dde1ea; --text: #1a1f2e; --muted: #6b7280;
+      --green: #1e6b3a; --red: #b91c1c; --sidebar: 308px;
+    }
+    html, body { height: 100%; font-family: Arial, Helvetica, sans-serif; background: var(--bg); color: var(--text); }
+    .app { display: flex; flex-direction: column; height: 100vh; min-height: 0; }
+
+    /* Header */
+    header {
+      background: var(--navy); color: #fff; padding: 0 20px; height: 56px;
+      display: flex; align-items: center; flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(0,0,0,.2); z-index: 100; gap: 14px;
+    }
+    .brand-text { line-height: 1.25; flex: 1; }
+    .brand-name { font-size: 16px; font-weight: 700; letter-spacing: .4px; }
+    .brand-tag  { font-size: 11px; opacity: .65; }
+
+    /* Layout */
+    .body-wrap { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+    aside {
+      width: var(--sidebar); flex-shrink: 0; background: var(--panel);
+      border-right: 1px solid var(--border); display: flex; flex-direction: column;
+      overflow-y: auto; overflow-x: hidden;
+    }
+    .sidebar-hd {
+      padding: 14px 16px 12px; background: var(--navy); color: #fff;
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; flex-shrink: 0;
+    }
+    .sidebar-body { padding: 14px 14px 28px; flex: 1; display: flex; flex-direction: column; gap: 16px; }
+
+    /* Controls */
+    .ctrl { display: flex; flex-direction: column; gap: 5px; }
+    .lbl { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
+    input[type="text"], select {
+      width: 100%; border: 1px solid var(--border); border-radius: 4px;
+      padding: 7px 10px; font-size: 13px; font-family: Arial, Helvetica, sans-serif;
+      color: var(--text); background: #fff; appearance: none; outline: none; transition: border-color .15s;
+    }
+    input[type="text"]:focus, select:focus { border-color: var(--navy-lt); box-shadow: 0 0 0 2px rgba(42,79,142,.15); }
+    select {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236b7280' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px;
+    }
+    .date-row { display: flex; gap: 8px; }
+    .date-row .ctrl { flex: 1; }
+    .hint { font-size: 11px; color: var(--muted); line-height: 1.5; }
+    .hint a { color: var(--navy-lt); text-decoration: none; }
+    .hint a:hover { text-decoration: underline; }
+
+    /* Autocomplete */
+    .search-wrap { position: relative; }
+    .search-clear {
+      position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+      background: none; border: none; color: var(--muted); font-size: 16px;
+      cursor: pointer; line-height: 1; display: none; padding: 0;
+    }
+    .ac-list {
+      position: absolute; top: 100%; left: 0; right: 0; z-index: 300;
+      background: #fff; border: 1px solid var(--border); border-top: none;
+      border-radius: 0 0 4px 4px; max-height: 220px; overflow-y: auto;
+      box-shadow: 0 4px 12px rgba(0,0,0,.12); display: none;
+    }
+    .ac-list.open { display: block; }
+    .ac-item { padding: 8px 10px; cursor: pointer; border-bottom: 1px solid #f0f1f5; transition: background .1s; }
+    .ac-item:last-child { border-bottom: none; }
+    .ac-item:hover, .ac-item.active { background: #eef1f8; }
+    .ac-name { font-size: 12px; font-weight: 600; color: var(--navy); line-height: 1.3; }
+    .ac-id   { font-size: 10px; color: var(--muted); margin-top: 1px; }
+    .ac-msg  { padding: 10px; text-align: center; color: var(--muted); font-size: 12px; font-style: italic; }
+
+    /* Overlay chips */
+    .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+    .chip {
+      display: flex; align-items: center; gap: 4px;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 12px; padding: 3px 8px; font-size: 11px; color: var(--navy);
+    }
+    .chip-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .chip-x { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0; line-height: 1; }
+    .chip-x:hover { color: var(--red); }
+
+    /* Key / Worker panels */
+    .key-panel {
+      background: #fffbe6; border: 1px solid #e6c74a; border-radius: 5px;
+      padding: 11px 12px; display: flex; flex-direction: column; gap: 8px;
+    }
+    .key-title { font-size: 12px; font-weight: 700; color: #6b4c00; }
+    .key-desc  { font-size: 11px; color: #7a5c00; line-height: 1.5; }
+    .key-desc a { color: var(--navy-lt); }
+    .key-row   { display: flex; gap: 6px; }
+    .key-row input { flex: 1; font-size: 12px; padding: 6px 8px; font-family: monospace; }
+    .ksave { padding: 6px 12px; background: var(--navy); color: #fff; border: none; border-radius: 4px; font-size: 12px; font-weight: 700; font-family: Arial; cursor: pointer; }
+    .ksave:hover { background: var(--navy-lt); }
+    .key-ok {
+      display: none; align-items: center; gap: 8px;
+      background: #f0faf4; border: 1px solid #86efac; border-radius: 5px;
+      padding: 9px 12px; font-size: 12px; color: var(--green); font-weight: 600;
+    }
+    .key-ok a { color: var(--muted); font-weight: 400; font-size: 11px; margin-left: 4px; text-decoration: none; }
+    .key-ok a:hover { text-decoration: underline; }
+    .worker-panel {
+      background: #f0f4ff; border: 1px solid #a5b4fc; border-radius: 5px;
+      padding: 11px 12px; display: flex; flex-direction: column; gap: 6px;
+    }
+    .worker-title { font-size: 12px; font-weight: 700; color: #3730a3; }
+    .worker-desc  { font-size: 11px; color: #4338ca; line-height: 1.5; }
+
+    /* Popular */
+    .pop-list { display: flex; flex-direction: column; gap: 4px; }
+    .pop-btn {
+      text-align: left; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 4px; padding: 7px 10px; font-size: 12px; font-family: Arial;
+      color: var(--navy); cursor: pointer; transition: background .12s, border-color .12s; line-height: 1.35;
+    }
+    .pop-btn:hover { background: #eef1f8; border-color: var(--navy-lt); }
+    .pop-btn small { display: block; color: var(--muted); font-size: 10px; margin-top: 1px; }
+
+    /* Recession toggle */
+    .tog-row { display: flex; align-items: center; gap: 8px; }
+    .tog-row label { font-size: 12px; color: var(--text); cursor: pointer; user-select: none; flex: 1; }
+    .toggle { position: relative; width: 34px; height: 18px; flex-shrink: 0; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .tog-sl { position: absolute; cursor: pointer; inset: 0; background: #d1d5db; border-radius: 18px; transition: .2s; }
+    .tog-sl:before { content: ''; position: absolute; height: 12px; width: 12px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: .2s; }
+    .toggle input:checked + .tog-sl { background: var(--navy); }
+    .toggle input:checked + .tog-sl:before { transform: translateX(16px); }
+
+    /* Buttons */
+    .btn-primary {
+      width: 100%; padding: 11px; background: var(--navy); color: #fff; border: none;
+      border-radius: 4px; font-size: 13px; font-weight: 700; font-family: Arial; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 7px; transition: background .15s;
+    }
+    .btn-primary:hover { background: var(--navy-lt); }
+    .btn-primary:disabled { opacity: .45; cursor: default; }
+    .btn-row { display: flex; gap: 6px; }
+    .btn-sm {
+      flex: 1; padding: 8px 4px; background: #fff; color: var(--navy);
+      border: 1px solid var(--navy); border-radius: 4px; font-size: 11px; font-weight: 600;
+      font-family: Arial; cursor: pointer; transition: background .12s; text-align: center;
+    }
+    .btn-sm:hover { background: #eef1f8; }
+    .btn-sm:disabled { opacity: .4; cursor: default; }
+    hr.div { border: none; border-top: 1px solid var(--border); }
+
+    /* Presets */
+    .preset-list { display: flex; flex-direction: column; gap: 4px; }
+    .p-item {
+      display: flex; align-items: center; gap: 6px; background: var(--bg);
+      border: 1px solid var(--border); border-radius: 4px; padding: 7px 10px;
+      font-size: 12px; color: var(--navy); cursor: pointer; transition: background .12s;
+    }
+    .p-item:hover { background: #eef1f8; border-color: var(--navy-lt); }
+    .p-name { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .p-sub  { font-size: 10px; color: var(--muted); }
+    .p-del  { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0; line-height: 1; flex-shrink: 0; }
+    .p-del:hover { color: var(--red); }
+    .no-p   { font-size: 12px; color: var(--muted); font-style: italic; }
+
+    /* Main */
+    main { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 20px; gap: 14px; overflow-y: auto; }
+    .state {
+      flex: 1; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 12px; color: var(--muted); text-align: center; padding: 40px;
+    }
+    .state .ico { font-size: 40px; opacity: .5; }
+    .state h3  { font-size: 16px; color: var(--navy); }
+    .state p   { font-size: 13px; max-width: 440px; line-height: 1.6; }
+    .spinner {
+      width: 34px; height: 34px; border: 3px solid var(--border);
+      border-top-color: var(--navy); border-radius: 50%; animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .err-box { background: #fff5f5; border: 1px solid #fca5a5; border-radius: 5px; padding: 14px 16px; max-width: 500px; text-align: left; line-height: 1.6; }
+    .err-t   { font-size: 14px; font-weight: 700; color: #991b1b; margin-bottom: 6px; }
+    .err-b   { font-size: 13px; color: #7f1d1d; }
+    .err-h   { margin-top: 10px; font-size: 12px; color: #92400e; border-top: 1px solid #fca5a5; padding-top: 10px; }
+
+    /* Stats bar */
+    .stats-bar {
+      display: flex; border: 1px solid var(--border); border-radius: 6px;
+      overflow: hidden; background: var(--panel); flex-shrink: 0;
+    }
+    .stat { flex: 1; padding: 11px 14px; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; }
+    .stat:last-child { border-right: none; }
+    .stat-lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
+    .stat-val { font-size: 17px; font-weight: 700; color: var(--navy); }
+    .stat-sub { font-size: 10px; color: var(--muted); }
+
+    /* Chart card */
+    .chart-card {
+      background: #fff; border: 1px solid var(--border); border-radius: 6px;
+      flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 20px 20px 16px;
+    }
+    .chart-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .chart-titles { flex: 1; min-width: 0; }
+    .chart-title { font-size: 16px; font-weight: 700; color: var(--navy); line-height: 1.3; font-family: Arial; }
+    .chart-sub   { font-size: 11px; color: var(--muted); margin-top: 3px; font-family: Arial; }
+    .chart-wrap  { position: relative; flex: 1; min-height: 300px; }
+    .chart-wrap canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; }
+    .chart-legend {
+      display: flex; gap: 16px; align-items: center; margin-top: 8px;
+      font-size: 11px; color: var(--muted); flex-wrap: wrap;
+    }
+    .leg-item { display: flex; align-items: center; gap: 5px; }
+    .leg-sw { width: 14px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+    .chart-footer {
+      margin-top: 8px; font-size: 10px; color: var(--muted); font-family: Arial;
+      display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px;
+    }
+
+    /* Responsive */
+    @media (max-width: 760px) {
+      :root { --sidebar: 100%; }
+      .body-wrap { flex-direction: column; }
+      aside { width: 100%; max-height: 55vh; border-right: none; border-bottom: 1px solid var(--border); }
+      main { padding: 12px; }
+      .stats-bar { flex-wrap: wrap; }
+      .stat { min-width: 45%; }
+    }
+    @media (max-width: 420px) { .stat { min-width: 100%; } }
+  </style>
+</head>
+<body>
+<div class="app">
+
+<!-- Header -->
+<header>
+  <svg viewBox="0 0 130 40" fill="none" xmlns="http://www.w3.org/2000/svg" style="height:26px;width:auto;flex-shrink:0">
+    <polygon points="0,40 18,0 130,0 112,40" fill="rgba(255,255,255,0.18)"/>
+    <polygon points="18,0 38,0 20,40 0,40" fill="white"/>
+    <polygon points="24,0 34,0 16,40 6,40" fill="rgba(255,255,255,0.18)"/>
+    <text x="44" y="28" font-family="Arial,sans-serif" font-size="20" font-weight="700" fill="white" letter-spacing="2">BAIRD</text>
+  </svg>
+  <div class="brand-text">
+    <div class="brand-name">FRED Data Explorer</div>
+    <div class="brand-tag">St. Louis Fed &middot; Baird Research Tools</div>
+  </div>
+</header>
+
+<div class="body-wrap">
+<aside>
+  <div class="sidebar-hd">Chart Controls</div>
+  <div class="sidebar-body">
+
+    <!-- Step 1: API Key -->
+    <div class="ctrl">
+      <div class="lbl">Step 1 &mdash; FRED API Key</div>
+      <div class="key-panel" id="keyPanel">
+        <div class="key-title">&#128273; Free API key required</div>
+        <div class="key-desc">Get yours free at <a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank" rel="noopener">fred.stlouisfed.org</a>, then paste here:</div>
+        <div class="key-row">
+          <input type="text" id="keyInput" placeholder="32-character key&hellip;" spellcheck="false" autocomplete="off"/>
+          <button class="ksave" onclick="saveKey()">Save</button>
+        </div>
+      </div>
+      <div class="key-ok" id="keySaved">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="#1e6b3a" stroke-width="1.5"/><path d="M4 7l2 2 4-4" stroke="#1e6b3a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        API key saved <a href="#" id="chKeyLink">change</a>
+      </div>
+    </div>
+
+    <!-- Step 2: Worker URL -->
+    <div class="ctrl">
+      <div class="lbl">Step 2 &mdash; Proxy URL</div>
+      <div class="worker-panel" id="workerPanel">
+        <div class="worker-title">&#128279; Cloudflare Worker URL</div>
+        <div class="worker-desc">Paste your Worker URL (e.g. <code style="font-size:10px">https://fred-proxy.name.workers.dev</code>):</div>
+        <div class="key-row">
+          <input type="text" id="workerInput" placeholder="https://&hellip;workers.dev" spellcheck="false" autocomplete="off"/>
+          <button class="ksave" onclick="saveWorker()">Save</button>
+        </div>
+      </div>
+      <div class="key-ok" id="workerSaved">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="#1e6b3a" stroke-width="1.5"/><path d="M4 7l2 2 4-4" stroke="#1e6b3a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Proxy URL saved <a href="#" id="chWorkerLink">change</a>
+      </div>
+    </div>
+
+    <!-- Step 3: Primary series search -->
+    <div class="ctrl">
+      <div class="lbl">Step 3 &mdash; Primary Series</div>
+      <div class="search-wrap">
+        <input type="text" id="seriesSearch" placeholder="Search by name or ID&hellip;" spellcheck="false" autocomplete="off"/>
+        <button class="search-clear" id="searchClear" onclick="clearSearch()">&times;</button>
+        <div class="ac-list" id="acList"></div>
+      </div>
+      <div class="hint">e.g. &ldquo;unemployment&rdquo;, &ldquo;CPI&rdquo;, or type &ldquo;UNRATE&rdquo; directly</div>
+    </div>
+
+    <!-- Overlay series -->
+    <div class="ctrl">
+      <div class="lbl">Overlay Series <span style="font-weight:400;text-transform:none;letter-spacing:0">(up to 3, optional)</span></div>
+      <div class="search-wrap">
+        <input type="text" id="overlaySearch" placeholder="Add a 2nd series to compare&hellip;" spellcheck="false" autocomplete="off"/>
+        <div class="ac-list" id="acListOv"></div>
+      </div>
+      <div class="chips" id="chips"></div>
+    </div>
+
+    <!-- Popular -->
+    <div class="ctrl">
+      <div class="lbl">Popular Series</div>
+      <div class="pop-list">
+        <button class="pop-btn" onclick="pick('UNRATE','Unemployment Rate')">Unemployment Rate<small>UNRATE &middot; Monthly</small></button>
+        <button class="pop-btn" onclick="pick('GDP','Gross Domestic Product')">Gross Domestic Product<small>GDP &middot; Quarterly</small></button>
+        <button class="pop-btn" onclick="pick('CPIAUCSL','CPI All Urban Consumers')">CPI &mdash; All Urban Consumers<small>CPIAUCSL &middot; Monthly</small></button>
+        <button class="pop-btn" onclick="pick('FEDFUNDS','Federal Funds Rate')">Federal Funds Rate<small>FEDFUNDS &middot; Monthly</small></button>
+        <button class="pop-btn" onclick="pick('T10Y2Y','10Y-2Y Treasury Spread')">10Y&ndash;2Y Treasury Spread<small>T10Y2Y &middot; Daily</small></button>
+        <button class="pop-btn" onclick="pick('HOUST','Housing Starts')">Housing Starts<small>HOUST &middot; Monthly</small></button>
+        <button class="pop-btn" onclick="pick('SP500','S&amp;P 500 Index')">S&amp;P 500 Index<small>SP500 &middot; Daily</small></button>
+        <button class="pop-btn" onclick="pick('DEXUSEU','USD/EUR Exchange Rate')">USD / EUR Exchange Rate<small>DEXUSEU &middot; Daily</small></button>
+      </div>
+    </div>
+
+    <hr class="div"/>
+
+    <div class="ctrl">
+      <label class="lbl" for="units">Units</label>
+      <select id="units">
+        <option value="lin">Levels (native units)</option>
+        <option value="chg">Change from prior period</option>
+        <option value="ch1">Change from year ago</option>
+        <option value="pch">% Change from prior period</option>
+        <option value="pc1">% Change from year ago</option>
+        <option value="pca">Compounded annual rate of change</option>
+        <option value="cch">Continuously compounded rate</option>
+        <option value="cca">Cont. compounded annual rate</option>
+        <option value="log">Natural log</option>
+      </select>
+    </div>
+
+    <div class="ctrl">
+      <label class="lbl" for="freq">Frequency</label>
+      <select id="freq" onchange="toggleAgg()">
+        <option value="">Default (native)</option>
+        <option value="d">Daily</option>
+        <option value="w">Weekly</option>
+        <option value="bw">Biweekly</option>
+        <option value="m">Monthly</option>
+        <option value="q">Quarterly</option>
+        <option value="sa">Semiannual</option>
+        <option value="a">Annual</option>
+      </select>
+    </div>
+
+    <div class="ctrl" id="aggCtrl" style="display:none">
+      <label class="lbl" for="agg">Aggregation</label>
+      <select id="agg">
+        <option value="avg">Average</option>
+        <option value="sum">Sum</option>
+        <option value="eop">End of Period</option>
+      </select>
+    </div>
+
+    <div class="ctrl">
+      <div class="lbl">Date Range</div>
+      <div class="date-row">
+        <div class="ctrl">
+          <label class="lbl" style="font-size:9px">Start</label>
+          <input type="text" id="startDate" placeholder="YYYY-MM-DD" value="2000-01-01"/>
+        </div>
+        <div class="ctrl">
+          <label class="lbl" style="font-size:9px">End</label>
+          <input type="text" id="endDate" placeholder="Today"/>
+        </div>
+      </div>
+    </div>
+
+    <hr class="div"/>
+
+    <div class="ctrl">
+      <label class="lbl" for="chartType">Chart Style</label>
+      <select id="chartType">
+        <option value="line">Line</option>
+        <option value="bar">Bar</option>
+      </select>
+    </div>
+
+    <div class="tog-row">
+      <label class="toggle">
+        <input type="checkbox" id="toggleRec" checked/>
+        <span class="tog-sl"></span>
+      </label>
+      <label for="toggleRec">Shade recession periods</label>
+    </div>
+
+    <button class="btn-primary" id="plotBtn" onclick="run()">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <path d="M1 12L4.5 7l3 3L11 4l2 2" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Plot Chart
+    </button>
+
+    <div class="btn-row">
+      <button class="btn-sm" id="dlBtn"   onclick="dlCSV()"      disabled>&#8595; CSV</button>
+      <button class="btn-sm" id="pdfBtn"  onclick="dlPDF()"      disabled>&#8595; PDF</button>
+      <button class="btn-sm" id="saveBtn" onclick="savePreset()" disabled>&#9733; Save</button>
+    </div>
+
+    <hr class="div"/>
+
+    <!-- Saved presets -->
+    <div class="ctrl">
+      <div class="lbl">My Saved Charts</div>
+      <div class="preset-list" id="presets">
+        <div class="no-p">No saved charts yet &mdash; plot a chart and click &#9733; Save</div>
+      </div>
+    </div>
+
+    <hr class="div"/>
+
+    <!-- Worker setup (collapsible) -->
+    <div class="ctrl">
+      <div class="lbl" style="cursor:pointer" onclick="toggleWS()">&#9658; Worker setup instructions</div>
+      <div id="wsBox" style="display:none;margin-top:6px">
+        <div style="font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:8px">
+          1. <a href="https://workers.cloudflare.com" target="_blank" style="color:var(--navy-lt)">workers.cloudflare.com</a>
+             &rarr; Create Worker &rarr; Hello World &rarr; Deploy &rarr; Edit code<br/>
+          2. Select all (Ctrl+A), paste code below, Save and deploy<br/>
+          3. Copy your Worker URL into Step 2 above
+        </div>
+        <pre id="wCode" style="background:#1a1f2e;color:#e2e8f0;padding:10px;border-radius:4px;font-size:10px;overflow-x:auto;line-height:1.55;white-space:pre-wrap">export default {
+  async fetch(request) {
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': '*'
+      }});
+    }
+    const url = new URL(request.url);
+    const path = url.pathname.replace(/^\/fred\//, '');
+    const params = url.searchParams.toString();
+    const fredUrl = `https://api.stlouisfed.org/fred/${path}${params ? '?' + params : ''}`;
+    const resp = await fetch(fredUrl, { headers: { 'User-Agent': 'FRED-Explorer/1.0' } });
+    const body = await resp.text();
+    return new Response(body, { status: resp.status, headers: {
+      'Content-Type': resp.headers.get('Content-Type') || 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'public, max-age=300'
+    }});
+  }
+};</pre>
+        <button onclick="copyWC()" style="margin-top:6px;padding:5px 12px;background:var(--navy);color:#fff;border:none;border-radius:4px;font-size:11px;font-weight:700;font-family:Arial;cursor:pointer;">&#128203; Copy Worker Code</button>
+      </div>
+    </div>
+
+  </div>
+</aside>
+
+<!-- Main content -->
+<main id="main">
+  <div class="state" id="setupScreen">
+    <div class="ico">&#128295;</div>
+    <h3>One-time setup needed</h3>
+    <p>Enter your FRED API key (Step 1) and Cloudflare Worker URL (Step 2) in the sidebar, then search for any economic dataset to get started.</p>
+  </div>
+  <div class="state" id="readyScreen" style="display:none">
+    <div class="ico">&#128200;</div>
+    <h3>Ready to go!</h3>
+    <p>Search for a dataset or click a popular series. You can overlay up to 3 series on one chart, shade recession periods automatically, and save your favorite chart configurations as presets.</p>
+  </div>
+</main>
+</div>
+</div>
+
+<script>
+// ================================================================
+// STATE
+// ================================================================
+var chartInst = null, csvData = null, csvMeta = null, selectedId = null;
+var overlaySeries = [], overlayData = {};
+var acTimer = null, acTimerOv = null, acCtrl = null, acCtrlOv = null;
+var recCache = null;
+var COLORS = ['#e05c2a', '#1a9e5e', '#7c3aed'];
+var NAVY   = '#1a3668';
+var MON    = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// ================================================================
+// STORAGE
+// ================================================================
+function sg(k)   { try { return sessionStorage.getItem(k) || ''; } catch(e) { return ''; } }
+function ss(k,v) { try { sessionStorage.setItem(k,v); } catch(e) {} }
+function sd(k)   { try { sessionStorage.removeItem(k); } catch(e) {} }
+function lg(k,d) { try { return JSON.parse(localStorage.getItem(k)) || d; } catch(e) { return d; } }
+function ls(k,v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch(e) {} }
+function getKey()  { return sg('fredKey'); }
+function getW()    { return sg('fredWorker'); }
+
+// ================================================================
+// CREDENTIALS
+// ================================================================
+function saveKey() {
+  var k = document.getElementById('keyInput').value.trim();
+  if (k.length < 20) { alert('Please enter a valid 32-character FRED API key.'); return; }
+  ss('fredKey', k); refreshUI();
+}
+function saveWorker() {
+  var w = document.getElementById('workerInput').value.trim();
+  if (!w.startsWith('http')) { alert('Paste the full Worker URL starting with https://'); return; }
+  ss('fredWorker', w.replace(/\/$/, '')); refreshUI();
+}
+function changeKey(e)    { e && e.preventDefault(); sd('fredKey');    document.getElementById('keyInput').value    = ''; refreshUI(); }
+function changeWorker(e) { e && e.preventDefault(); sd('fredWorker'); document.getElementById('workerInput').value = ''; refreshUI(); }
+
+function refreshUI() {
+  var hk = !!getKey(), hw = !!getW();
+  document.getElementById('keyPanel').style.display    = hk ? 'none' : '';
+  document.getElementById('keySaved').style.display    = hk ? 'flex' : 'none';
+  document.getElementById('workerPanel').style.display = hw ? 'none' : '';
+  document.getElementById('workerSaved').style.display = hw ? 'flex' : 'none';
+  var ready = hk && hw;
+  document.getElementById('setupScreen').style.display = ready ? 'none' : '';
+  document.getElementById('readyScreen').style.display = ready ? ''     : 'none';
+}
+function toggleWS() { var e = document.getElementById('wsBox'); e.style.display = e.style.display === 'none' ? '' : 'none'; }
+function copyWC() {
+  var code = document.getElementById('wCode').textContent;
+  navigator.clipboard.writeText(code).then(function() { alert('Worker code copied!'); }).catch(function() {
+    var r = document.createRange(); r.selectNode(document.getElementById('wCode'));
+    window.getSelection().removeAllRanges(); window.getSelection().addRange(r);
+  });
+}
+
+// ================================================================
+// INIT
+// ================================================================
+(function init() {
+  refreshUI();
+  renderPresets();
+  document.getElementById('keyInput').addEventListener('keydown',    function(e) { if (e.key === 'Enter') saveKey(); });
+  document.getElementById('workerInput').addEventListener('keydown', function(e) { if (e.key === 'Enter') saveWorker(); });
+  document.getElementById('chKeyLink').addEventListener('click',    changeKey);
+  document.getElementById('chWorkerLink').addEventListener('click', changeWorker);
+
+  var ps = document.getElementById('seriesSearch');
+  ps.addEventListener('input',   function() { onAcIn('p'); });
+  ps.addEventListener('keydown', function(e) { onAcKd(e, 'p'); });
+  ps.addEventListener('blur',    function() { setTimeout(function() { closeAC('p'); }, 150); });
+
+  var ov = document.getElementById('overlaySearch');
+  ov.addEventListener('input',   function() { onAcIn('o'); });
+  ov.addEventListener('keydown', function(e) { onAcKd(e, 'o'); });
+  ov.addEventListener('blur',    function() { setTimeout(function() { closeAC('o'); }, 150); });
+})();
+
+function toggleAgg() {
+  document.getElementById('aggCtrl').style.display = document.getElementById('freq').value ? '' : 'none';
+}
+
+// ================================================================
+// AUTOCOMPLETE
+// ================================================================
+function onAcIn(w) {
+  var q = document.getElementById(w === 'p' ? 'seriesSearch' : 'overlaySearch').value.trim();
+  if (w === 'p') { document.getElementById('searchClear').style.display = q ? '' : 'none'; selectedId = null; }
+  clearTimeout(w === 'p' ? acTimer : acTimerOv);
+  if (q.length < 2) { closeAC(w); return; }
+  if (w === 'p') acTimer   = setTimeout(function() { fetchAC(q, 'p'); }, 280);
+  else           acTimerOv = setTimeout(function() { fetchAC(q, 'o'); }, 280);
+}
+function onAcKd(e, w) {
+  var list   = document.getElementById(w === 'p' ? 'acList' : 'acListOv');
+  var items  = list.querySelectorAll('.ac-item');
+  var active = list.querySelector('.ac-item.active');
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (!active && items[0]) items[0].classList.add('active');
+    else if (active) { var nx = active.nextElementSibling; active.classList.remove('active'); if (nx) nx.classList.add('active'); }
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (active) { var pv = active.previousElementSibling; active.classList.remove('active'); if (pv) pv.classList.add('active'); }
+  } else if (e.key === 'Enter') { e.preventDefault(); if (active) active.click(); else if (w === 'p') run(); }
+  else if (e.key === 'Escape') closeAC(w);
+}
+async function fetchAC(q, w) {
+  if (!getKey() || !getW()) return;
+  if (w === 'p') { if (acCtrl)   acCtrl.abort();   acCtrl   = new AbortController(); }
+  else           { if (acCtrlOv) acCtrlOv.abort(); acCtrlOv = new AbortController(); }
+  setACMsg(w, 'Searching&hellip;');
+  try {
+    var url = new URL(getW() + '/fred/series/search');
+    url.searchParams.set('search_text', q);
+    url.searchParams.set('api_key',     getKey());
+    url.searchParams.set('file_type',   'json');
+    url.searchParams.set('limit',       '8');
+    url.searchParams.set('order_by',    'popularity');
+    url.searchParams.set('sort_order',  'desc');
+    var res  = await fetch(url.toString(), { signal: w === 'p' ? acCtrl.signal : acCtrlOv.signal });
+    var json = await res.json();
+    var ss   = json.seriess || [];
+    if (!ss.length) { setACMsg(w, 'No results found'); return; }
+    renderACItems(ss, w);
+  } catch(e) { if (e.name !== 'AbortError') closeAC(w); }
+}
+function setACMsg(w, msg) {
+  document.getElementById(w === 'p' ? 'acList' : 'acListOv').innerHTML = '<div class="ac-msg">' + msg + '</div>';
+  openAC(w);
+}
+function renderACItems(series, w) {
+  var lid = w === 'p' ? 'acList' : 'acListOv';
+  document.getElementById(lid).innerHTML = series.map(function(s) {
+    return '<div class="ac-item" data-id="' + esc(s.id) + '" data-name="' + esc(s.title) + '" onclick="selAC(this,\'' + w + '\')">'
+      + '<div class="ac-name">' + esc(s.title) + '</div>'
+      + '<div class="ac-id">'  + esc(s.id) + ' &middot; ' + esc(s.frequency_short || '') + ' &middot; ' + esc(s.units_short || '') + '</div>'
+      + '</div>';
+  }).join('');
+  openAC(w);
+}
+function selAC(el, w) {
+  if (w === 'p') {
+    selectedId = el.dataset.id;
+    document.getElementById('seriesSearch').value = el.dataset.name + '  (' + el.dataset.id + ')';
+    document.getElementById('searchClear').style.display = '';
+    closeAC('p'); run();
+  } else {
+    addOverlay(el.dataset.id, el.dataset.name);
+    document.getElementById('overlaySearch').value = '';
+    closeAC('o');
+  }
+}
+function openAC(w)  { document.getElementById(w === 'p' ? 'acList' : 'acListOv').classList.add('open'); }
+function closeAC(w) { document.getElementById(w === 'p' ? 'acList' : 'acListOv').classList.remove('open'); }
+function clearSearch() {
+  document.getElementById('seriesSearch').value = '';
+  document.getElementById('searchClear').style.display = 'none';
+  selectedId = null; closeAC('p');
+}
+function pick(id, name) {
+  selectedId = id;
+  document.getElementById('seriesSearch').value = name + '  (' + id + ')';
+  document.getElementById('searchClear').style.display = '';
+  run();
+}
+
+// ================================================================
+// OVERLAY SERIES
+// ================================================================
+function addOverlay(id, name) {
+  if (overlaySeries.length >= 3) { alert('Maximum 3 overlay series. Remove one first.'); return; }
+  if (overlaySeries.find(function(s) { return s.id === id; })) return;
+  overlaySeries.push({ id: id, name: name, color: COLORS[overlaySeries.length] });
+  renderChips();
+  if (chartInst) run();
+}
+function removeOverlay(id) {
+  overlaySeries = overlaySeries.filter(function(s) { return s.id !== id; });
+  delete overlayData[id];
+  renderChips();
+  if (chartInst) run();
+}
+function renderChips() {
+  var el = document.getElementById('chips');
+  if (!overlaySeries.length) { el.innerHTML = ''; return; }
+  el.innerHTML = overlaySeries.map(function(s) {
+    return '<div class="chip">'
+      + '<div class="chip-dot" style="background:' + s.color + '"></div>'
+      + '<span>' + esc(s.name) + ' (' + esc(s.id) + ')</span>'
+      + '<button class="chip-x" onclick="removeOverlay(\'' + esc(s.id) + '\')">&times;</button>'
+      + '</div>';
+  }).join('');
+}
+
+// ================================================================
+// RECESSION SHADING
+// ================================================================
+async function fetchRec() {
+  if (recCache) return recCache;
+  try {
+    var obs = await fredFetch('series/observations', { series_id: 'USREC', observation_start: '1950-01-01' });
+    recCache = (obs.observations || []).filter(function(o) { return o.value !== '.'; });
+    return recCache;
+  } catch(e) { return []; }
+}
+
+function buildRecPlugin(rawLabels, recObs) {
+  var recMap = {};
+  recObs.forEach(function(o) { recMap[o.date] = parseInt(o.value); });
+  var inRec = rawLabels.map(function(d) {
+    if (recMap[d] !== undefined) return recMap[d] === 1;
+    var last = 0;
+    for (var i = 0; i < recObs.length; i++) {
+      if (recObs[i].date <= d) last = parseInt(recObs[i].value);
+      else break;
+    }
+    return last === 1;
+  });
+  return {
+    id: 'recShading',
+    beforeDraw: function(chart) {
+      var ctx = chart.ctx, ca = chart.chartArea, xs = chart.scales.x;
+      if (!ca) return;
+      ctx.save();
+      ctx.fillStyle = 'rgba(150,150,150,0.13)';
+      var inB = false, bx = 0;
+      inRec.forEach(function(r, i) {
+        var x = xs.getPixelForValue(i);
+        if (r && !inB)  { inB = true;  bx = x; }
+        if (!r && inB)  { ctx.fillRect(bx, ca.top, x - bx, ca.bottom - ca.top); inB = false; }
+      });
+      if (inB) ctx.fillRect(bx, ca.top, ca.right - bx, ca.bottom - ca.top);
+      ctx.restore();
+    }
+  };
+}
+
+// ================================================================
+// FRED FETCH
+// ================================================================
+async function fredFetch(path, params) {
+  var key = getKey(), w = getW();
+  if (!key) throw { code: 'NO_KEY' };
+  if (!w)   throw { code: 'NO_WORKER' };
+  var url = new URL(w + '/fred/' + path);
+  url.searchParams.set('api_key',   key);
+  url.searchParams.set('file_type', 'json');
+  for (var k in params) if (params[k] !== undefined && params[k] !== '') url.searchParams.set(k, params[k]);
+  var res, json;
+  try { res = await fetch(url.toString()); json = await res.json(); }
+  catch(e) { throw { code: 'NETWORK', detail: e.message }; }
+  if (json && json.error_code) throw { code: 'FRED_ERR', detail: json.error_message || 'Unknown FRED error' };
+  if (!res.ok) throw { code: 'HTTP_' + res.status };
+  return json;
+}
+
+// ================================================================
+// UI HELPERS
+// ================================================================
+function setMain(h) { document.getElementById('main').innerHTML = h; }
+function showLoading() { setMain('<div class="state"><div class="spinner"></div><h3>Fetching from FRED&hellip;</h3><p>Retrieving data via your Cloudflare Worker</p></div>'); }
+function showError(err) {
+  var t, b, h = '';
+  switch (err.code) {
+    case 'NO_KEY':    t = 'API key required';        b = 'Enter your FRED API key in Step 1.'; break;
+    case 'NO_WORKER': t = 'Proxy URL required';      b = 'Enter your Cloudflare Worker URL in Step 2.'; break;
+    case 'NO_SERIES': t = 'No dataset selected';     b = 'Search for a dataset or click a popular series.'; break;
+    case 'NETWORK':   t = 'Could not reach Worker';  b = 'Check the Worker URL is correct and deployed.'; h = 'Detail: ' + esc(err.detail || ''); break;
+    case 'FRED_ERR':  t = 'FRED API error';          b = esc(err.detail || 'Unknown'); h = 'Check your API key is valid.'; break;
+    case 'BAD_SERIES':t = 'Series not found';        b = 'That Series ID was not found on FRED.'; break;
+    case 'NO_DATA':   t = 'No data returned';        b = 'Try a wider date range or different frequency.'; break;
+    default:          t = 'Something went wrong';    b = esc(err.detail || err.code || 'Unknown error');
+  }
+  setMain('<div class="state"><div class="ico">&#9888;&#65039;</div><h3>Could not load data</h3>'
+    + '<div class="err-box"><div class="err-t">' + t + '</div><div class="err-b">' + b + '</div>'
+    + (h ? '<div class="err-h">' + h + '</div>' : '') + '</div></div>');
+}
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function mmmYY(d) {
+  var p = d.split('-');
+  if (p.length < 2) return d;
+  return MON[parseInt(p[1], 10) - 1] + '-' + p[0].slice(2);
+}
+function fmt(v) {
+  if (v === null || v === undefined || isNaN(v)) return '--';
+  var a = Math.abs(v);
+  if (a >= 1e12) return (v/1e12).toFixed(2) + 'T';
+  if (a >= 1e9)  return (v/1e9).toFixed(2)  + 'B';
+  if (a >= 1e6)  return (v/1e6).toFixed(2)  + 'M';
+  if (a >= 1000) return v.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  if (a < 0.01 && a > 0) return v.toFixed(4);
+  return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+function uLbl(c, n) {
+  return ({ lin:'Levels', chg:'Change', ch1:'Change from Year Ago', pch:'% Change', pc1:'% Change from Year Ago',
+    pca:'Ann. Rate of Chg.', cch:'Cont. Comp. Rate', cca:'Cont. Comp. Ann. Rate', log:'Natural Log' }[c]) || n || 'Levels';
+}
+
+// ================================================================
+// MAIN RUN
+// ================================================================
+async function run() {
+  if (!getKey())   { showError({ code: 'NO_KEY' });    return; }
+  if (!getW())     { showError({ code: 'NO_WORKER' }); return; }
+  var id = selectedId;
+  if (!id) {
+    var raw = document.getElementById('seriesSearch').value.trim().toUpperCase().split(/\s/)[0];
+    if (raw) id = raw; else { showError({ code: 'NO_SERIES' }); return; }
+  }
+  var units = document.getElementById('units').value;
+  var freq  = document.getElementById('freq').value;
+  var agg   = document.getElementById('agg').value;
+  var sDate = document.getElementById('startDate').value.trim();
+  var eDate = document.getElementById('endDate').value.trim();
+  var cType = document.getElementById('chartType').value;
+  var showR = document.getElementById('toggleRec').checked;
+
+  ['plotBtn','dlBtn','pdfBtn','saveBtn'].forEach(function(b) {
+    var el = document.getElementById(b); if (el) el.disabled = true;
+  });
+  showLoading();
+
+  try {
+    var meta = await fredFetch('series', { series_id: id });
+    var info = meta.seriess && meta.seriess[0];
+    if (!info) throw { code: 'BAD_SERIES', detail: id };
+
+    var p = { series_id: id, units: units };
+    if (sDate) p.observation_start = sDate;
+    if (eDate) p.observation_end   = eDate;
+    if (freq)  { p.frequency = freq; p.aggregation_method = agg; }
+
+    var oRes = await fredFetch('series/observations', p);
+    var data = (oRes.observations || []).filter(function(o) {
+      return o.value !== '.' && o.value !== '' && !isNaN(parseFloat(o.value));
+    });
+    if (!data.length) throw { code: 'NO_DATA' };
+
+    csvData = data; csvMeta = info;
+    overlayData = {};
+
+    for (var i = 0; i < overlaySeries.length; i++) {
+      var ov = overlaySeries[i];
+      try {
+        var op = { series_id: ov.id };
+        if (sDate) op.observation_start = sDate;
+        if (eDate) op.observation_end   = eDate;
+        if (freq)  { op.frequency = freq; op.aggregation_method = agg; }
+        var od = await fredFetch('series/observations', op);
+        overlayData[ov.id] = (od.observations || []).filter(function(o) {
+          return o.value !== '.' && o.value !== '' && !isNaN(parseFloat(o.value));
+        });
+      } catch(e) { overlayData[ov.id] = []; }
+    }
+
+    var recObs = showR ? await fetchRec() : [];
+    drawChart(data, info, units, cType, recObs);
+
+  } catch(err) {
+    if (err instanceof Error) showError({ code: 'UNKNOWN', detail: err.message });
+    else showError(err);
+  } finally {
+    document.getElementById('plotBtn').disabled = false;
+  }
+}
+
+// ================================================================
+// DRAW CHART
+// ================================================================
+function drawChart(data, info, units, type, recObs) {
+  if (chartInst) { chartInst.destroy(); chartInst = null; }
+
+  var labels = data.map(function(d) { return d.date; });
+  var vals   = data.map(function(d) { return parseFloat(d.value); });
+  var latest = vals[vals.length-1], first = vals[0];
+  var hi = Math.max.apply(null, vals), lo = Math.min.apply(null, vals);
+  var chg = latest - first;
+  var chgPct = first !== 0 ? ((chg / Math.abs(first)) * 100).toFixed(2) : null;
+  var pos = chg >= 0;
+
+  var MAX = 1200, rawLbls = labels, vs = vals;
+  if (labels.length > MAX) {
+    var step = Math.ceil(labels.length / MAX);
+    rawLbls = labels.filter(function(_, i) { return i % step === 0; });
+    vs      = vals.filter(function(_, i)   { return i % step === 0; });
+  }
+  var dispLbls = rawLbls.map(mmmYY);
+
+  var freqEl  = document.getElementById('freq');
+  var freqTxt = freqEl.value ? freqEl.selectedOptions[0].text : info.frequency;
+  var ul      = uLbl(units, info.units);
+  var isBar   = type === 'bar';
+  var showR   = document.getElementById('toggleRec').checked;
+
+  // Overlay datasets
+  var ovDS = overlaySeries.map(function(ov) {
+    var od = overlayData[ov.id] || [];
+    var dm = {}; od.forEach(function(o) { dm[o.date] = parseFloat(o.value); });
+    var ovV = rawLbls.map(function(d) { var v = dm[d]; return v !== undefined ? v : null; });
+    return {
+      label: ov.name + ' (' + ov.id + ')', data: ovV,
+      borderColor: ov.color, backgroundColor: 'transparent',
+      borderWidth: 2, pointRadius: 0, pointHoverRadius: 4,
+      tension: 0.25, fill: false, yAxisID: 'y2'
+    };
+  });
+  var hasOv = ovDS.length > 0;
+
+  // Legend HTML
+  var legHTML = '<div class="leg-item"><div class="leg-sw" style="background:' + NAVY + ';opacity:.8"></div>' + esc(info.title) + '</div>'
+    + overlaySeries.map(function(ov) {
+        return '<div class="leg-item"><div class="leg-sw" style="background:' + ov.color + '"></div>' + esc(ov.name) + '</div>';
+      }).join('')
+    + (showR && recObs.length ? '<div class="leg-item"><div class="leg-sw" style="background:rgba(150,150,150,0.4)"></div>Recession</div>' : '');
+
+  // Baird logo SVG (inline — always renders)
+  var bairdSVG = '<svg viewBox="0 0 130 40" fill="none" xmlns="http://www.w3.org/2000/svg" style="height:32px;width:auto;flex-shrink:0">'
+    + '<polygon points="0,40 18,0 130,0 112,40" fill="#1a3668"/>'
+    + '<polygon points="18,0 38,0 20,40 0,40" fill="white"/>'
+    + '<polygon points="24,0 34,0 16,40 6,40" fill="#1a3668"/>'
+    + '<text x="44" y="28" font-family="Arial,sans-serif" font-size="20" font-weight="700" fill="white" letter-spacing="2">BAIRD</text>'
+    + '</svg>';
+
+  setMain(
+    '<div class="stats-bar">'
+    + '<div class="stat"><div class="stat-lbl">Latest Value</div><div class="stat-val">' + fmt(latest) + '</div><div class="stat-sub">' + mmmYY(data[data.length-1].date) + '</div></div>'
+    + '<div class="stat"><div class="stat-lbl">Period High</div><div class="stat-val">' + fmt(hi) + '</div><div class="stat-sub">max in range</div></div>'
+    + '<div class="stat"><div class="stat-lbl">Period Low</div><div class="stat-val">' + fmt(lo) + '</div><div class="stat-sub">min in range</div></div>'
+    + '<div class="stat"><div class="stat-lbl">Total Change</div><div class="stat-val" style="color:' + (pos ? 'var(--green)' : 'var(--red)') + '">' + (pos ? '+' : '') + fmt(chg) + '</div><div class="stat-sub">' + (chgPct !== null ? chgPct + '% vs start' : '') + '</div></div>'
+    + '<div class="stat"><div class="stat-lbl">Observations</div><div class="stat-val">' + data.length.toLocaleString() + '</div><div class="stat-sub">' + mmmYY(data[0].date) + ' &rarr; ' + mmmYY(data[data.length-1].date) + '</div></div>'
+    + '</div>'
+    + '<div class="chart-card">'
+    +   '<div class="chart-top">'
+    +     '<div class="chart-titles">'
+    +       '<div class="chart-title">' + esc(info.title) + (overlaySeries.length ? ' <span style="font-size:12px;font-weight:400;color:var(--muted)">+ ' + overlaySeries.length + ' overlay' + (overlaySeries.length > 1 ? 's' : '') + '</span>' : '') + '</div>'
+    +       '<div class="chart-sub">' + esc(info.id) + ' &nbsp;&middot;&nbsp; ' + esc(ul) + ' &nbsp;&middot;&nbsp; ' + esc(freqTxt) + ' &nbsp;&middot;&nbsp; ' + esc(info.seasonal_adjustment_short || '') + '</div>'
+    +     '</div>'
+    +     bairdSVG
+    +   '</div>'
+    +   '<div class="chart-wrap"><canvas id="cc"></canvas></div>'
+    +   '<div class="chart-legend">' + legHTML + '</div>'
+    +   '<div class="chart-footer">'
+    +     '<span>Source: Federal Reserve Bank of St. Louis (FRED) &middot; Series: ' + esc(info.id) + '</span>'
+    +     '<span>Last updated: ' + ((info.last_updated || '').substring(0, 10) || '--') + '</span>'
+    +   '</div>'
+    + '</div>'
+  );
+
+  document.getElementById('dlBtn').disabled  = false;
+  document.getElementById('pdfBtn').disabled = false;
+  document.getElementById('saveBtn').disabled = false;
+
+  var plugins = [];
+  if (showR && recObs.length) plugins.push(buildRecPlugin(rawLbls, recObs));
+
+  var scales = {
+    x: { ticks: { font: { family: 'Arial', size: 13 }, color: '#4b5563', maxTicksLimit: 10, maxRotation: 0 }, grid: { color: '#f0f1f5' }, border: { color: '#dde1ea' } },
+    y: { ticks: { font: { family: 'Arial', size: 13 }, color: '#4b5563', callback: function(v) { return fmt(v); } }, grid: { color: '#f0f1f5' }, border: { color: '#dde1ea' } }
+  };
+  if (hasOv) {
+    scales.y2 = {
+      position: 'right',
+      ticks: { font: { family: 'Arial', size: 11 }, color: '#9ca3af', callback: function(v) { return fmt(v); } },
+      grid: { drawOnChartArea: false }
+    };
+  }
+
+  chartInst = new Chart(document.getElementById('cc').getContext('2d'), {
+    type: isBar ? 'bar' : 'line',
+    data: {
+      labels: dispLbls,
+      datasets: [{
+        label: info.title, data: vs,
+        borderColor: NAVY, backgroundColor: isBar ? 'rgba(26,54,104,0.80)' : 'rgba(26,54,104,0.08)',
+        borderWidth: isBar ? 0 : 2.5, pointRadius: 0, pointHoverRadius: 5,
+        pointHoverBackgroundColor: NAVY, tension: 0.25, fill: !isBar,
+        borderRadius: isBar ? 2 : 0, yAxisID: 'y'
+      }].concat(ovDS)
+    },
+    plugins: plugins,
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: { duration: 300 },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#fff', titleColor: '#6b7280', bodyColor: NAVY,
+          borderColor: '#dde1ea', borderWidth: 1, padding: 10,
+          titleFont: { family: 'Arial', size: 12, weight: '400' },
+          bodyFont:  { family: 'Arial', size: 13, weight: '700' },
+          callbacks: {
+            title: function(items) { return items[0].label; },
+            label: function(item)  {
+              var ds = chartInst.data.datasets[item.datasetIndex];
+              return ds.label + ': ' + fmt(item.raw);
+            }
+          }
+        }
+      },
+      scales: scales
+    }
+  });
+}
+
+// ================================================================
+// PRESETS
+// ================================================================
+function savePreset() {
+  if (!csvMeta || !selectedId) return;
+  var presets = lg('fredPresets', []);
+  presets.unshift({
+    id:        Date.now(),
+    seriesId:  selectedId,
+    seriesName: csvMeta.title,
+    units:     document.getElementById('units').value,
+    freq:      document.getElementById('freq').value,
+    agg:       document.getElementById('agg').value,
+    startDate: document.getElementById('startDate').value,
+    endDate:   document.getElementById('endDate').value,
+    chartType: document.getElementById('chartType').value,
+    recession: document.getElementById('toggleRec').checked,
+    overlays:  overlaySeries.map(function(o) { return { id: o.id, name: o.name, color: o.color }; })
+  });
+  ls('fredPresets', presets.slice(0, 20));
+  renderPresets();
+}
+function loadPreset(id) {
+  var p = lg('fredPresets', []).find(function(x) { return x.id === id; });
+  if (!p) return;
+  selectedId = p.seriesId;
+  document.getElementById('seriesSearch').value        = p.seriesName + '  (' + p.seriesId + ')';
+  document.getElementById('searchClear').style.display = '';
+  document.getElementById('units').value     = p.units     || 'lin';
+  document.getElementById('freq').value      = p.freq      || '';
+  document.getElementById('agg').value       = p.agg       || 'avg';
+  document.getElementById('startDate').value = p.startDate || '2000-01-01';
+  document.getElementById('endDate').value   = p.endDate   || '';
+  document.getElementById('chartType').value = p.chartType || 'line';
+  document.getElementById('toggleRec').checked = !!p.recession;
+  toggleAgg();
+  overlaySeries = (p.overlays || []).map(function(o) { return { id: o.id, name: o.name, color: o.color }; });
+  overlayData = {};
+  renderChips();
+  run();
+}
+function deletePreset(id, e) {
+  e && e.stopPropagation();
+  ls('fredPresets', lg('fredPresets', []).filter(function(p) { return p.id !== id; }));
+  renderPresets();
+}
+function renderPresets() {
+  var presets = lg('fredPresets', []);
+  var el = document.getElementById('presets');
+  if (!presets.length) {
+    el.innerHTML = '<div class="no-p">No saved charts yet &mdash; plot a chart and click &#9733; Save</div>';
+    return;
+  }
+  el.innerHTML = presets.map(function(p) {
+    return '<div class="p-item" onclick="loadPreset(' + p.id + ')">'
+      + '<div><div class="p-name">' + esc(p.seriesName || p.seriesId) + '</div>'
+      + '<div class="p-sub">' + esc(p.seriesId) + ' &middot; ' + esc(p.chartType || 'line')
+      + (p.overlays && p.overlays.length ? ' &middot; +' + p.overlays.length + ' overlay' : '') + '</div></div>'
+      + '<button class="p-del" onclick="deletePreset(' + p.id + ',event)" title="Delete">&times;</button>'
+      + '</div>';
+  }).join('');
+}
+
+// ================================================================
+// CSV EXPORT
+// ================================================================
+function dlCSV() {
+  if (!csvData || !csvMeta) return;
+  var rows = ['Date,' + csvMeta.id].concat(csvData.map(function(d) { return d.date + ',' + d.value; }));
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([rows.join('\n')], { type: 'text/csv' }));
+  a.download = 'FRED_' + csvMeta.id + '_' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+}
+
+// ================================================================
+// PDF EXPORT
+// ================================================================
+async function dlPDF() {
+  if (!chartInst || !csvMeta) return;
+  var btn = document.getElementById('pdfBtn');
+  btn.disabled = true; btn.textContent = '...';
+  try {
+    var j = window.jspdf, pdf = new j.jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    var PW = 297, PH = 210, M = 14;
+    pdf.setFillColor(26,54,104); pdf.rect(0,0,PW,18,'F');
+    pdf.setFont('helvetica','bold'); pdf.setFontSize(13); pdf.setTextColor(255,255,255);
+    pdf.text('FRED Data Explorer - Baird Research Tools', M, 12);
+    pdf.text('BAIRD', PW-M, 12, { align: 'right' });
+    pdf.setFont('helvetica','bold'); pdf.setFontSize(14); pdf.setTextColor(26,54,104);
+    pdf.text(csvMeta.title || '', M, 28);
+    var fe = document.getElementById('freq');
+    var ft = fe.value ? fe.selectedOptions[0].text : (csvMeta.frequency || '');
+    var ul = uLbl(document.getElementById('units').value, csvMeta.units);
+    pdf.setFont('helvetica','normal'); pdf.setFontSize(9); pdf.setTextColor(107,114,128);
+    pdf.text(csvMeta.id + '  .  ' + ul + '  .  ' + ft + '  .  ' + (csvMeta.seasonal_adjustment_short || ''), M, 34);
+    var vs2 = csvData.map(function(d) { return parseFloat(d.value); });
+    var stats = [
+      { l:'Latest', v: fmt(vs2[vs2.length-1]) },
+      { l:'High',   v: fmt(Math.max.apply(null, vs2)) },
+      { l:'Low',    v: fmt(Math.min.apply(null, vs2)) },
+      { l:'Count',  v: csvData.length.toLocaleString() },
+      { l:'Range',  v: mmmYY(csvData[0].date) + ' - ' + mmmYY(csvData[csvData.length-1].date) }
+    ];
+    var sw = (PW - M*2) / stats.length;
+    stats.forEach(function(s, i) {
+      var x = M + i * sw;
+      pdf.setFont('helvetica','bold'); pdf.setFontSize(7); pdf.setTextColor(107,114,128); pdf.text(s.l.toUpperCase(), x, 42);
+      pdf.setFont('helvetica','bold'); pdf.setFontSize(12); pdf.setTextColor(26,54,104); pdf.text(s.v, x, 49);
+    });
+    var canvas = document.getElementById('cc');
+    pdf.addImage(canvas.toDataURL('image/png',1.0), 'PNG', M, 55, PW-M*2, PH-55-16);
+    pdf.setFont('helvetica','normal'); pdf.setFontSize(7); pdf.setTextColor(156,163,175);
+    pdf.text('Source: Federal Reserve Bank of St. Louis (FRED)  .  Generated ' + new Date().toLocaleDateString(), M, PH-4);
+    pdf.text('(c) Robert W. Baird & Co.', PW-M, PH-4, { align: 'right' });
+    pdf.save('FRED_' + csvMeta.id + '_' + new Date().toISOString().slice(0,10) + '.pdf');
+  } catch(err) { alert('PDF failed: ' + err.message); }
+  finally { btn.disabled = false; btn.textContent = '\u2193 PDF'; }
+}
+</script>
+</body>
+</html>
