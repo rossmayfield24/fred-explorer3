@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FRED Data Explorer — Baird</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <!-- jsPDF for PDF export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --navy:    #1a3668;   /* Baird blue from logo */
+      --navy-lt: #2a4f8e;
+      --bg:      #f5f6f9;
+      --panel:   #ffffff;
+      --border:  #dde1ea;
+      --text:    #1a1f2e;
+      --muted:   #6b7280;
+      --green:   #1e6b3a;
+      --red:     #b91c1c;
+      --sidebar: 300px;
+    }
+    html, body { height: 100%; font-family: Arial, Helvetica, sans-serif; background: var(--bg); color: var(--text); }
+    .app { display: flex; flex-direction: column; height: 100vh; min-height: 0; }
+
+    header {
+      background: var(--navy); color: #fff; padding: 0 20px; height: 56px;
+      display: flex; align-items: center; flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(0,0,0,.2); z-index: 10; gap: 14px;
+    }
+    .header-logo { height: 28px; width: auto; filter: brightness(0) invert(1); }
+    .brand-text { line-height: 1.25; }
+    .brand-name { font-size: 16px; font-weight: 700; letter-spacing: .4px; }
+    .brand-tag  { font-size: 11px; opacity: .65; }
+
+    .body-wrap { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+
+    aside {
+      width: var(--sidebar); flex-shrink: 0; background: var(--panel);
+      border-right: 1px solid var(--border); display: flex; flex-direction: column;
+      overflow-y: auto; overflow-x: hidden;
+    }
+    .sidebar-hd {
+      padding: 14px 16px 12px; background: var(--navy); color: #fff;
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; flex-shrink: 0;
+    }
+    .sidebar-body { padding: 14px 14px 28px; flex: 1; display: flex; flex-direction: column; gap: 16px; }
+
+    .ctrl { display: flex; flex-direction: column; gap: 5px; }
+    .lbl { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
+    input[type="text"], select {
+      width: 100%; border: 1px solid var(--border); border-radius: 4px;
+      padding: 7px 10px; font-size: 13px; font-family: Arial, Helvetica, sans-serif;
+      color: var(--text); background: #fff; appearance: none; outline: none; transition: border-color .15s;
+    }
+    input[type="text"]:focus, select:focus { border-color: var(--navy-lt); box-shadow: 0 0 0 2px rgba(42,79,142,.15); }
+    select {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236b7280' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px;
+    }
+    .date-row { display: flex; gap: 8px; }
+    .date-row .ctrl { flex: 1; }
+    .hint { font-size: 11px; color: var(--muted); line-height: 1.5; }
+    .hint a { color: var(--navy-lt); text-decoration: none; }
+    .hint a:hover { text-decoration: underline; }
+
+    /* ── Autocomplete search ── */
+    .search-wrap { position: relative; }
+    .search-wrap input { padding-right: 30px; }
+    .search-clear {
+      position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+      background: none; border: none; color: var(--muted); font-size: 16px;
+      cursor: pointer; line-height: 1; display: none; padding: 0;
+    }
+    .autocomplete-list {
+      position: absolute; top: 100%; left: 0; right: 0; z-index: 200;
+      background: #fff; border: 1px solid var(--border); border-top: none;
+      border-radius: 0 0 4px 4px; max-height: 220px; overflow-y: auto;
+      box-shadow: 0 4px 12px rgba(0,0,0,.12); display: none;
+    }
+    .autocomplete-list.open { display: block; }
+    .ac-item {
+      padding: 8px 10px; cursor: pointer; border-bottom: 1px solid #f0f1f5;
+      transition: background .1s;
+    }
+    .ac-item:last-child { border-bottom: none; }
+    .ac-item:hover, .ac-item.active { background: #eef1f8; }
+    .ac-item-name { font-size: 12px; font-weight: 600; color: var(--navy); line-height: 1.3; }
+    .ac-item-id   { font-size: 10px; color: var(--muted); margin-top: 1px; }
+    .ac-loading { padding: 10px; text-align: center; color: var(--muted); font-size: 12px; }
+    .ac-none    { padding: 10px; text-align: center; color: var(--muted); font-size: 12px; font-style: italic; }
+
+    /* ── API key ── */
+    .key-panel {
+      background: #fffbe6; border: 1px solid #e6c74a; border-radius: 5px;
+      padding: 11px 12px; display: flex; flex-direction: column; gap: 8px;
+    }
+    .key-title { font-size: 12px; font-weight: 700; color: #6b4c00; }
+    .key-desc  { font-size: 11px; color: #7a5c00; line-height: 1.5; }
+    .key-desc a { color: var(--navy-lt); }
+    .key-row   { display: flex; gap: 6px; }
+    .key-row input { flex: 1; font-size: 12px; padding: 6px 8px; font-family: monospace; }
+    .key-save-btn {
+      padding: 6px 12px; background: var(--navy); color: #fff; border: none;
+      border-radius: 4px; font-size: 12px; font-weight: 700; font-family: Arial; cursor: pointer;
+    }
+    .key-save-btn:hover { background: var(--navy-lt); }
+    .key-saved {
+      display: none; align-items: center; gap: 8px;
+      background: #f0faf4; border: 1px solid #86efac; border-radius: 5px;
+      padding: 9px 12px; font-size: 12px; color: var(--green); font-weight: 600;
+    }
+    .key-saved a { color: var(--muted); font-weight: 400; font-size: 11px; margin-left: 4px; text-decoration: none; }
+    .key-saved a:hover { text-decoration: underline; }
+
+    /* ── Worker URL ── */
+    .worker-panel {
+      background: #f0f4ff; border: 1px solid #a5b4fc; border-radius: 5px;
+      padding: 11px 12px; display: flex; flex-direction: column; gap: 6px;
+    }
+    .worker-title { font-size: 12px; font-weight: 700; color: #3730a3; }
+    .worker-desc  { font-size: 11px; color: #4338ca; line-height: 1.5; }
+    .worker-saved {
+      display: none; align-items: center; gap: 8px;
+      background: #f0faf4; border: 1px solid #86efac; border-radius: 5px;
+      padding: 9px 12px; font-size: 12px; color: var(--green); font-weight: 600;
+    }
+    .worker-saved a { color: var(--muted); font-weight: 400; font-size: 11px; margin-left: 4px; text-decoration: none; }
+
+    /* ── Popular series ── */
+    .pop-list { display: flex; flex-direction: column; gap: 4px; }
+    .pop-btn {
+      text-align: left; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 4px; padding: 7px 10px; font-size: 12px; font-family: Arial;
+      color: var(--navy); cursor: pointer; transition: background .12s, border-color .12s; line-height: 1.35;
+    }
+    .pop-btn:hover { background: #eef1f8; border-color: var(--navy-lt); }
+    .pop-btn small { display: block; color: var(--muted); font-size: 10px; margin-top: 1px; }
+
+    /* ── Buttons ── */
+    .btn-primary {
+      width: 100%; padding: 11px; background: var(--navy); color: #fff; border: none;
+      border-radius: 4px; font-size: 13px; font-weight: 700; font-family: Arial; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 7px; transition: background .15s;
+    }
+    .btn-primary:hover { background: var(--navy-lt); }
+    .btn-primary:disabled { opacity: .45; cursor: default; }
+    .btn-row { display: flex; gap: 8px; }
+    .btn-secondary {
+      flex: 1; padding: 8px; background: #fff; color: var(--navy);
+      border: 1px solid var(--navy); border-radius: 4px; font-size: 12px; font-weight: 600;
+      font-family: Arial; cursor: pointer; transition: background .12s; text-align: center;
+    }
+    .btn-secondary:hover { background: #eef1f8; }
+    .btn-secondary:disabled { opacity: .4; cursor: default; }
+    hr.div { border: none; border-top: 1px solid var(--border); }
+
+    /* ── Main area ── */
+    main { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 20px; gap: 14px; overflow-y: auto; }
+
+    .state {
+      flex: 1; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 12px; color: var(--muted); text-align: center; padding: 40px;
+    }
+    .state .ico { font-size: 40px; opacity: .5; }
+    .state h3  { font-size: 16px; color: var(--navy); }
+    .state p   { font-size: 13px; max-width: 440px; line-height: 1.6; }
+    .spinner {
+      width: 34px; height: 34px; border: 3px solid var(--border);
+      border-top-color: var(--navy); border-radius: 50%; animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .err-box {
+      background: #fff5f5; border: 1px solid #fca5a5; border-radius: 5px;
+      padding: 14px 16px; max-width: 500px; text-align: left; line-height: 1.6;
+    }
+    .err-title { font-size: 14px; font-weight: 700; color: #991b1b; margin-bottom: 6px; }
+    .err-body  { font-size: 13px; color: #7f1d1d; }
+    .err-hint  { margin-top: 10px; font-size: 12px; color: #92400e; border-top: 1px solid #fca5a5; padding-top: 10px; }
+    .err-hint a { color: var(--navy); }
+    .err-hint code { background: #fff; padding: 1px 5px; border-radius: 3px; font-size: 11px; border: 1px solid #fca5a5; }
+
+    /* ── Stats bar ── */
+    .stats-bar {
+      display: flex; border: 1px solid var(--border); border-radius: 6px;
+      overflow: hidden; background: var(--panel); flex-shrink: 0;
+    }
+    .stat { flex: 1; padding: 11px 14px; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; }
+    .stat:last-child { border-right: none; }
+    .stat-lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
+    .stat-val { font-size: 17px; font-weight: 700; color: var(--navy); }
+    .stat-sub { font-size: 10px; color: var(--muted); }
+
+    /* ── Chart card ── */
+    .chart-card {
+      background: #fff; border: 1px solid var(--border); border-radius: 6px;
+      flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 20px 20px 16px;
+    }
+    .chart-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .chart-titles { flex: 1; min-width: 0; }
+    .chart-title { font-size: 16px; font-weight: 700; color: var(--navy); line-height: 1.3; font-family: Arial; }
+    .chart-sub   { font-size: 11px; color: var(--muted); margin-top: 3px; font-family: Arial; }
+    .chart-logo  { flex-shrink: 0; height: 32px; width: auto; }
+    .chart-wrap  { position: relative; flex: 1; min-height: 300px; }
+    .chart-wrap canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; }
+    .chart-footer {
+      margin-top: 10px; font-size: 10px; color: var(--muted); font-family: Arial;
+      display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px;
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 760px) {
+      :root { --sidebar: 100%; }
+      .body-wrap { flex-direction: column; }
+      aside { width: 100%; max-height: 55vh; border-right: none; border-bottom: 1px solid var(--border); }
+      main { padding: 12px; }
+      .stats-bar { flex-wrap: wrap; }
+      .stat { min-width: 45%; }
+    }
+    @media (max-width: 420px) { .stat { min-width: 100%; } }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <header>
+    <img class="header-logo" src="https://www.rwbaird.com/globalassets/baird-logo-2022.svg" alt="Baird" onerror="this.style.display='none'" />
+    <div class="brand-text">
+      <div class="brand-name">FRED Data Explorer</div>
+      <div class="brand-tag">St. Louis Fed · Baird Research Tools</div>
+    </div>
+  </header>
+
+  <div class="body-wrap">
+    <aside>
+      <div class="sidebar-hd">Chart Controls</div>
+      <div class="sidebar-body">
+
+        <!-- Step 1: API Key -->
+        <div class="ctrl">
+          <div class="lbl">Step 1 — FRED API Key</div>
+          <div class="key-panel" id="keyPanel">
+            <div class="key-title">🔑 Free API key required</div>
+            <div class="key-desc">Get yours in ~60 seconds at <a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank" rel="noopener">fred.stlouisfed.org</a>, then paste it here:</div>
+            <div class="key-row">
+              <input type="text" id="keyInput" placeholder="32-character key…" spellcheck="false" autocomplete="off" />
+              <button class="key-save-btn" onclick="saveKey()">Save</button>
+            </div>
+          </div>
+          <div class="key-saved" id="keySaved">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="#1e6b3a" stroke-width="1.5"/><path d="M4 7l2 2 4-4" stroke="#1e6b3a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            API key saved <a href="#" id="changeKeyLink">change</a>
+          </div>
+        </div>
+
+        <!-- Step 2: Worker URL -->
+        <div class="ctrl">
+          <div class="lbl">Step 2 — Proxy URL</div>
+          <div class="worker-panel" id="workerPanel">
+            <div class="worker-title">🔗 Cloudflare Worker URL</div>
+            <div class="worker-desc">Paste your Worker URL (e.g. <code style="font-size:10px">https://fred-proxy.yourname.workers.dev</code>):</div>
+            <div class="key-row">
+              <input type="text" id="workerInput" placeholder="https://…workers.dev" spellcheck="false" autocomplete="off" />
+              <button class="key-save-btn" onclick="saveWorker()">Save</button>
+            </div>
+          </div>
+          <div class="worker-saved" id="workerSaved">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="#1e6b3a" stroke-width="1.5"/><path d="M4 7l2 2 4-4" stroke="#1e6b3a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Proxy URL saved <a href="#" id="changeWorkerLink">change</a>
+          </div>
+        </div>
+
+        <!-- Step 3: Search -->
+        <div class="ctrl">
+          <div class="lbl">Step 3 — Search Dataset</div>
+          <div class="search-wrap">
+            <input type="text" id="seriesSearch" placeholder="Search by name or Series ID…" spellcheck="false" autocomplete="off" />
+            <button class="search-clear" id="searchClear" onclick="clearSearch()">×</button>
+            <div class="autocomplete-list" id="acList"></div>
+          </div>
+          <div class="hint">Type a dataset name (e.g. "unemployment") or a Series ID (e.g. "UNRATE")</div>
+        </div>
+
+        <!-- Popular series -->
+        <div class="ctrl">
+          <div class="lbl">Popular Series</div>
+          <div class="pop-list">
+            <button class="pop-btn" onclick="pick('UNRATE','Unemployment Rate')">Unemployment Rate<small>UNRATE · Monthly</small></button>
+            <button class="pop-btn" onclick="pick('GDP','Gross Domestic Product')">Gross Domestic Product<small>GDP · Quarterly</small></button>
+            <button class="pop-btn" onclick="pick('CPIAUCSL','CPI — All Urban Consumers')">CPI — All Urban Consumers<small>CPIAUCSL · Monthly</small></button>
+            <button class="pop-btn" onclick="pick('FEDFUNDS','Federal Funds Rate')">Federal Funds Rate<small>FEDFUNDS · Monthly</small></button>
+            <button class="pop-btn" onclick="pick('T10Y2Y','10Y–2Y Treasury Spread')">10Y–2Y Treasury Spread<small>T10Y2Y · Daily</small></button>
+            <button class="pop-btn" onclick="pick('HOUST','Housing Starts')">Housing Starts<small>HOUST · Monthly</small></button>
+            <button class="pop-btn" onclick="pick('SP500','S&P 500 Index')">S&amp;P 500 Index<small>SP500 · Daily</small></button>
+            <button class="pop-btn" onclick="pick('DEXUSEU','USD/EUR Exchange Rate')">USD / EUR Exchange Rate<small>DEXUSEU · Daily</small></button>
+          </div>
+        </div>
+
+        <hr class="div" />
+
+        <div class="ctrl">
+          <label class="lbl" for="units">Units</label>
+          <select id="units">
+            <option value="lin">Levels (native units)</option>
+            <option value="chg">Change from prior period</option>
+            <option value="ch1">Change from year ago</option>
+            <option value="pch">% Change from prior period</option>
+            <option value="pc1">% Change from year ago</option>
+            <option value="pca">Compounded annual rate of change</option>
+            <option value="cch">Continuously compounded rate</option>
+            <option value="cca">Cont. compounded annual rate</option>
+            <option value="log">Natural log</option>
+          </select>
+        </div>
+
+        <div class="ctrl">
+          <label class="lbl" for="freq">Frequency</label>
+          <select id="freq" onchange="toggleAgg()">
+            <option value="">Default (native)</option>
+            <option value="d">Daily</option>
+            <option value="w">Weekly</option>
+            <option value="bw">Biweekly</option>
+            <option value="m">Monthly</option>
+            <option value="q">Quarterly</option>
+            <option value="sa">Semiannual</option>
+            <option value="a">Annual</option>
+          </select>
+        </div>
+
+        <div class="ctrl" id="aggCtrl" style="display:none">
+          <label class="lbl" for="agg">Aggregation Method</label>
+          <select id="agg">
+            <option value="avg">Average</option>
+            <option value="sum">Sum</option>
+            <option value="eop">End of Period</option>
+          </select>
+        </div>
+
+        <div class="ctrl">
+          <div class="lbl">Date Range</div>
+          <div class="date-row">
+            <div class="ctrl">
+              <label class="lbl" for="startDate" style="font-size:9px">Start</label>
+              <input type="text" id="startDate" placeholder="YYYY-MM-DD" value="2000-01-01" />
+            </div>
+            <div class="ctrl">
+              <label class="lbl" for="endDate" style="font-size:9px">End</label>
+              <input type="text" id="endDate" placeholder="Today" />
+            </div>
+          </div>
+        </div>
+
+        <hr class="div" />
+
+        <div class="ctrl">
+          <label class="lbl" for="chartType">Chart Style</label>
+          <select id="chartType">
+            <option value="line">Line</option>
+            <option value="bar">Bar</option>
+          </select>
+        </div>
+
+        <button class="btn-primary" id="plotBtn" onclick="run()">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M1 12L4.5 7l3 3L11 4l2 2" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Plot Chart
+        </button>
+
+        <div class="btn-row">
+          <button class="btn-secondary" id="dlBtn"  onclick="dlCSV()"  disabled>⬇ CSV</button>
+          <button class="btn-secondary" id="pdfBtn" onclick="dlPDF()"  disabled>⬇ PDF</button>
+        </div>
+
+      </div>
+    </aside>
+
+    <main id="main">
+      <div class="state" id="setupScreen">
+        <div class="ico">🔧</div>
+        <h3>One-time setup needed</h3>
+        <p>Enter your FRED API key and Cloudflare Worker URL in Steps 1 and 2 in the sidebar to get started.</p>
+        <div style="background:#fff;border:1px solid var(--border);border-radius:6px;padding:20px 24px;max-width:500px;text-align:left;font-size:13px;line-height:1.8;">
+          <strong style="color:var(--navy);font-size:14px;">New user? Set up your proxy in 5 minutes:</strong><br/><br/>
+          <strong>1.</strong> Go to <a href="https://workers.cloudflare.com" target="_blank" rel="noopener" style="color:var(--navy-lt)">workers.cloudflare.com</a> → free account → <strong>Create Worker → Start with Hello World</strong><br/>
+          <strong>2.</strong> Click <strong>Deploy</strong>, then <strong>Edit code</strong><br/>
+          <strong>3.</strong> Select all code (Ctrl+A), paste the code below, click <strong>Save and deploy</strong><br/>
+          <strong>4.</strong> Copy your Worker URL and paste it into Step 2 in the sidebar<br/><br/>
+          <strong style="color:var(--navy)">Worker code:</strong>
+          <pre id="workerCode" style="background:#1a1f2e;color:#e2e8f0;padding:12px;border-radius:4px;margin-top:8px;font-size:11px;overflow-x:auto;line-height:1.6;white-space:pre-wrap">export default {
+  async fetch(request) {
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': '*'
+      }});
+    }
+    const url = new URL(request.url);
+    const path = url.pathname.replace(/^\/fred\//, '');
+    const params = url.searchParams.toString();
+    const fredUrl = `https://api.stlouisfed.org/fred/${path}${params ? '?' + params : ''}`;
+    const resp = await fetch(fredUrl, { headers: { 'User-Agent': 'FRED-Explorer/1.0' } });
+    const body = await resp.text();
+    return new Response(body, { status: resp.status, headers: {
+      'Content-Type': resp.headers.get('Content-Type') || 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'public, max-age=300'
+    }});
+  }
+};</pre>
+          <button onclick="copyWorkerCode()" style="margin-top:8px;padding:6px 14px;background:var(--navy);color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:700;font-family:Arial;cursor:pointer;">📋 Copy Worker Code</button>
+        </div>
+      </div>
+      <div class="state" id="readyScreen" style="display:none">
+        <div class="ico">📈</div>
+        <h3>Ready to go!</h3>
+        <p>Search for a dataset above, or click a popular series to plot your first chart.</p>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let chartInst   = null;
+let csvData     = null;
+let csvMeta     = null;
+let selectedId  = null;   // the FRED series ID chosen from autocomplete
+let acDebounce  = null;
+let acAbort     = null;
+
+// ── Storage ────────────────────────────────────────────────────────────────
+function get(k)    { try { return sessionStorage.getItem(k) || ''; } catch(e) { return ''; } }
+function set(k, v) { try { sessionStorage.setItem(k, v); } catch(e) {} }
+function del(k)    { try { sessionStorage.removeItem(k); } catch(e) {} }
+function getKey()    { return get('fredApiKey'); }
+function getWorker() { return get('fredWorker'); }
+
+// ── Key / Worker management ────────────────────────────────────────────────
+function saveKey() {
+  const k = document.getElementById('keyInput').value.trim();
+  if (k.length < 20) { alert('That doesn\'t look like a valid FRED API key (should be 32 characters).'); return; }
+  set('fredApiKey', k); updateUI();
+}
+function changeKey(e) { e&&e.preventDefault(); del('fredApiKey'); document.getElementById('keyInput').value=''; updateUI(); }
+function saveWorker() {
+  let w = document.getElementById('workerInput').value.trim();
+  if (!w.startsWith('http')) { alert('Please paste the full Worker URL starting with https://'); return; }
+  set('fredWorker', w.replace(/\/$/,'')); updateUI();
+}
+function changeWorker(e) { e&&e.preventDefault(); del('fredWorker'); document.getElementById('workerInput').value=''; updateUI(); }
+
+function updateUI() {
+  const hasKey = !!getKey(), hasWorker = !!getWorker();
+  document.getElementById('keyPanel').style.display    = hasKey    ? 'none' : '';
+  document.getElementById('keySaved').style.display    = hasKey    ? 'flex' : 'none';
+  document.getElementById('workerPanel').style.display = hasWorker ? 'none' : '';
+  document.getElementById('workerSaved').style.display = hasWorker ? 'flex' : 'none';
+  const ready = hasKey && hasWorker;
+  document.getElementById('setupScreen').style.display = ready ? 'none' : '';
+  document.getElementById('readyScreen').style.display = ready ? '' : 'none';
+}
+
+function copyWorkerCode() {
+  const code = document.getElementById('workerCode').textContent;
+  navigator.clipboard.writeText(code)
+    .then(() => alert('Worker code copied!'))
+    .catch(() => { const el=document.getElementById('workerCode'); const r=document.createRange(); r.selectNode(el); window.getSelection().removeAllRanges(); window.getSelection().addRange(r); });
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+(function() {
+  updateUI();
+  document.getElementById('keyInput').addEventListener('keydown',    e=>{ if(e.key==='Enter') saveKey(); });
+  document.getElementById('workerInput').addEventListener('keydown', e=>{ if(e.key==='Enter') saveWorker(); });
+  document.getElementById('changeKeyLink').addEventListener('click',    changeKey);
+  document.getElementById('changeWorkerLink').addEventListener('click', changeWorker);
+
+  // Autocomplete wiring
+  const inp = document.getElementById('seriesSearch');
+  inp.addEventListener('input', onSearchInput);
+  inp.addEventListener('keydown', onSearchKeydown);
+  inp.addEventListener('blur', () => setTimeout(closeAC, 150));
+  inp.addEventListener('focus', () => { if(inp.value.trim().length >= 2) openAC(); });
+})();
+
+function toggleAgg() {
+  document.getElementById('aggCtrl').style.display = document.getElementById('freq').value ? '' : 'none';
+}
+
+// ── Autocomplete ───────────────────────────────────────────────────────────
+function onSearchInput() {
+  const q = document.getElementById('seriesSearch').value.trim();
+  document.getElementById('searchClear').style.display = q ? '' : 'none';
+  selectedId = null; // reset selection when user types
+  clearTimeout(acDebounce);
+  if (q.length < 2) { closeAC(); return; }
+  acDebounce = setTimeout(() => fetchSuggestions(q), 280);
+}
+
+function onSearchKeydown(e) {
+  const list = document.getElementById('acList');
+  const items = list.querySelectorAll('.ac-item');
+  const active = list.querySelector('.ac-item.active');
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (!active) { items[0]?.classList.add('active'); }
+    else { const nx = active.nextElementSibling; active.classList.remove('active'); if(nx) nx.classList.add('active'); }
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (active) { const pv = active.previousElementSibling; active.classList.remove('active'); if(pv) pv.classList.add('active'); }
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (active) { active.click(); } else { run(); }
+  } else if (e.key === 'Escape') { closeAC(); }
+}
+
+async function fetchSuggestions(q) {
+  if (!getKey() || !getWorker()) return;
+  if (acAbort) acAbort.abort();
+  acAbort = new AbortController();
+
+  showACLoading();
+
+  try {
+    const url = new URL(getWorker() + '/fred/series/search');
+    url.searchParams.set('search_text', q);
+    url.searchParams.set('api_key', getKey());
+    url.searchParams.set('file_type', 'json');
+    url.searchParams.set('limit', '8');
+    url.searchParams.set('order_by', 'popularity');
+    url.searchParams.set('sort_order', 'desc');
+
+    const res  = await fetch(url.toString(), { signal: acAbort.signal });
+    const json = await res.json();
+    const seriess = json.seriess || [];
+
+    if (!seriess.length) { showACNone(); return; }
+
+    renderAC(seriess);
+  } catch(e) {
+    if (e.name !== 'AbortError') closeAC();
+  }
+}
+
+function renderAC(seriess) {
+  const list = document.getElementById('acList');
+  list.innerHTML = seriess.map(s => `
+    <div class="ac-item" data-id="${escHtml(s.id)}" data-name="${escHtml(s.title)}" onclick="selectAC(this)">
+      <div class="ac-item-name">${escHtml(s.title)}</div>
+      <div class="ac-item-id">${escHtml(s.id)} · ${escHtml(s.frequency_short||'')} · ${escHtml(s.units_short||'')}</div>
+    </div>`).join('');
+  openAC();
+}
+
+function selectAC(el) {
+  selectedId = el.dataset.id;
+  document.getElementById('seriesSearch').value = el.dataset.name + '  (' + el.dataset.id + ')';
+  document.getElementById('searchClear').style.display = '';
+  closeAC();
+  run();
+}
+
+function showACLoading() {
+  const list = document.getElementById('acList');
+  list.innerHTML = '<div class="ac-loading">Searching…</div>';
+  openAC();
+}
+
+function showACNone() {
+  const list = document.getElementById('acList');
+  list.innerHTML = '<div class="ac-none">No matching series found</div>';
+  openAC();
+}
+
+function openAC()  { document.getElementById('acList').classList.add('open'); }
+function closeAC() { document.getElementById('acList').classList.remove('open'); }
+
+function clearSearch() {
+  document.getElementById('seriesSearch').value = '';
+  document.getElementById('searchClear').style.display = 'none';
+  selectedId = null;
+  closeAC();
+}
+
+function pick(id, name) {
+  selectedId = id;
+  document.getElementById('seriesSearch').value = name + '  (' + id + ')';
+  document.getElementById('searchClear').style.display = '';
+  run();
+}
+
+// ── FRED fetch ─────────────────────────────────────────────────────────────
+async function fredFetch(path, params) {
+  const key = getKey(), worker = getWorker();
+  if (!key)    throw { code: 'NO_KEY' };
+  if (!worker) throw { code: 'NO_WORKER' };
+
+  const url = new URL(worker + '/fred/' + path);
+  url.searchParams.set('api_key', key);
+  url.searchParams.set('file_type', 'json');
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== '') url.searchParams.set(k, v);
+  }
+
+  let res, json;
+  try { res = await fetch(url.toString()); json = await res.json(); }
+  catch(e) { throw { code: 'NETWORK', detail: e.message }; }
+
+  if (json && json.error_code) throw { code: 'FRED_ERR', detail: json.error_message || 'Unknown FRED error' };
+  if (!res.ok) throw { code: 'HTTP_ERR', detail: 'HTTP ' + res.status };
+  return json;
+}
+
+// ── UI helpers ─────────────────────────────────────────────────────────────
+function setMain(html) { document.getElementById('main').innerHTML = html; }
+
+function showLoading() {
+  setMain('<div class="state"><div class="spinner"></div><h3>Fetching from FRED…</h3><p>Retrieving data via your Cloudflare Worker</p></div>');
+}
+
+function showError(err) {
+  let title, body, hint = '';
+  switch(err.code) {
+    case 'NO_KEY':    title='FRED API key required'; body='Enter your FRED API key in Step 1.'; break;
+    case 'NO_WORKER': title='Proxy URL required'; body='Enter your Cloudflare Worker URL in Step 2.'; break;
+    case 'NO_SERIES': title='No dataset selected'; body='Search for a dataset or click a popular series first.'; break;
+    case 'NETWORK':   title='Could not reach your Worker'; body='Check that your Worker URL is correct and deployed.'; hint='Detail: '+escHtml(err.detail||''); break;
+    case 'FRED_ERR':  title='FRED API error'; body=escHtml(err.detail||'Unknown error'); hint='Check your API key is valid.'; break;
+    case 'BAD_SERIES':title='Series not found'; body='Series ID <code>'+escHtml(err.detail||'')+'</code> not found.'; break;
+    case 'NO_DATA':   title='No data returned'; body='No observations for these settings. Try a wider date range.'; break;
+    default:          title='Something went wrong'; body=escHtml(err.detail||err.code||'Unknown error');
+  }
+  setMain(`<div class="state"><div class="ico">⚠️</div><h3>Could not load data</h3>
+    <div class="err-box"><div class="err-title">${title}</div><div class="err-body">${body}</div>${hint?`<div class="err-hint">${hint}</div>`:''}</div></div>`);
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Date formatting ────────────────────────────────────────────────────────
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function toMmmYY(dateStr) {
+  // dateStr is YYYY-MM-DD
+  const parts = dateStr.split('-');
+  if (parts.length < 2) return dateStr;
+  const month = parseInt(parts[1], 10) - 1;
+  const year  = parts[0].slice(2);
+  return MONTHS[month] + '-' + year;
+}
+
+// ── Number format ──────────────────────────────────────────────────────────
+function fmt(v) {
+  if (v===null||v===undefined||isNaN(v)) return '—';
+  const a=Math.abs(v);
+  if (a>=1e12) return (v/1e12).toFixed(2)+'T';
+  if (a>=1e9)  return (v/1e9).toFixed(2)+'B';
+  if (a>=1e6)  return (v/1e6).toFixed(2)+'M';
+  if (a>=1000) return v.toLocaleString(undefined,{maximumFractionDigits:1});
+  if (a<0.01&&a>0) return v.toFixed(4);
+  return v.toLocaleString(undefined,{maximumFractionDigits:2});
+}
+
+function unitsLabel(code, native) {
+  return ({lin:'Levels',chg:'Change',ch1:'Change from Year Ago',pch:'% Change',pc1:'% Change from Year Ago',
+    pca:'Ann. Rate of Chg.',cch:'Cont. Comp. Rate',cca:'Cont. Comp. Ann. Rate',log:'Natural Log'}[code])||native||'Levels';
+}
+
+// ── Main run ───────────────────────────────────────────────────────────────
+async function run() {
+  if (!getKey())    { showError({code:'NO_KEY'});    return; }
+  if (!getWorker()) { showError({code:'NO_WORKER'}); return; }
+
+  // Resolve series ID
+  let id = selectedId;
+  if (!id) {
+    // Try treating the search box value as a raw ID
+    const raw = document.getElementById('seriesSearch').value.trim().toUpperCase().split(/\s/)[0];
+    if (raw) id = raw;
+    else { showError({code:'NO_SERIES'}); return; }
+  }
+
+  const units     = document.getElementById('units').value;
+  const freq      = document.getElementById('freq').value;
+  const agg       = document.getElementById('agg').value;
+  const startDate = document.getElementById('startDate').value.trim();
+  const endDate   = document.getElementById('endDate').value.trim();
+  const chartType = document.getElementById('chartType').value;
+
+  document.getElementById('plotBtn').disabled = true;
+  document.getElementById('dlBtn').disabled   = true;
+  document.getElementById('pdfBtn').disabled  = true;
+  showLoading();
+
+  try {
+    const meta = await fredFetch('series', { series_id: id });
+    const info  = meta.seriess?.[0];
+    if (!info) throw { code: 'BAD_SERIES', detail: id };
+
+    const p = { series_id: id, units };
+    if (startDate) p.observation_start = startDate;
+    if (endDate)   p.observation_end   = endDate;
+    if (freq)      { p.frequency = freq; p.aggregation_method = agg; }
+
+    const obs  = await fredFetch('series/observations', p);
+    const data = (obs.observations||[]).filter(o => o.value!=='.'&&o.value!==''&&!isNaN(parseFloat(o.value)));
+
+    if (!data.length) throw { code: 'NO_DATA' };
+
+    csvData = data; csvMeta = info;
+    drawChart(data, info, units, chartType);
+
+  } catch(err) {
+    if (err instanceof Error) showError({ code: 'UNKNOWN', detail: err.message });
+    else showError(err);
+  } finally {
+    document.getElementById('plotBtn').disabled = false;
+  }
+}
+
+// ── Draw chart ─────────────────────────────────────────────────────────────
+function drawChart(data, info, units, type) {
+  if (chartInst) { chartInst.destroy(); chartInst = null; }
+
+  const labels = data.map(d => d.date);
+  const vals   = data.map(d => parseFloat(d.value));
+  const latest = vals[vals.length-1], first = vals[0];
+  const hi = Math.max(...vals), lo = Math.min(...vals);
+  const chg = latest - first;
+  const chgPct = first !== 0 ? ((chg/Math.abs(first))*100).toFixed(2) : null;
+  const pos = chg >= 0;
+
+  // Thin for perf
+  const MAX = 1200;
+  let lbls = labels, vs = vals;
+  if (labels.length > MAX) {
+    const step = Math.ceil(labels.length/MAX);
+    lbls = labels.filter((_,i)=>i%step===0);
+    vs   = vals.filter((_,i)=>i%step===0);
+  }
+
+  const freqEl  = document.getElementById('freq');
+  const freqTxt = freqEl.value ? freqEl.selectedOptions[0].text : info.frequency;
+  const uLabel  = unitsLabel(units, info.units);
+
+  // Format x-axis labels as MMM-YY
+  const displayLbls = lbls.map(toMmmYY);
+
+  document.getElementById('main').innerHTML = `
+    <div class="stats-bar">
+      <div class="stat"><div class="stat-lbl">Latest Value</div><div class="stat-val">${fmt(latest)}</div><div class="stat-sub">${toMmmYY(data[data.length-1].date)}</div></div>
+      <div class="stat"><div class="stat-lbl">Period High</div><div class="stat-val">${fmt(hi)}</div><div class="stat-sub">max in range</div></div>
+      <div class="stat"><div class="stat-lbl">Period Low</div><div class="stat-val">${fmt(lo)}</div><div class="stat-sub">min in range</div></div>
+      <div class="stat"><div class="stat-lbl">Total Change</div><div class="stat-val" style="color:${pos?'var(--green)':'var(--red)'}">${pos?'+':''}${fmt(chg)}</div><div class="stat-sub">${chgPct!==null?chgPct+'% vs start':''}</div></div>
+      <div class="stat"><div class="stat-lbl">Observations</div><div class="stat-val">${data.length.toLocaleString()}</div><div class="stat-sub">${toMmmYY(data[0].date)} → ${toMmmYY(data[data.length-1].date)}</div></div>
+    </div>
+    <div class="chart-card" id="chartCard">
+      <div class="chart-top">
+        <div class="chart-titles">
+          <div class="chart-title">${escHtml(info.title)}</div>
+          <div class="chart-sub">${escHtml(info.id)} &nbsp;·&nbsp; ${escHtml(uLabel)} &nbsp;·&nbsp; ${escHtml(freqTxt)} &nbsp;·&nbsp; ${escHtml(info.seasonal_adjustment_short||'')}</div>
+        </div>
+        <img class="chart-logo" src="https://www.rwbaird.com/globalassets/baird-logo-2022.svg" alt="Baird"
+             onerror="this.style.display='none'" crossorigin="anonymous" />
+      </div>
+      <div class="chart-wrap"><canvas id="chartCanvas"></canvas></div>
+      <div class="chart-footer">
+        <span>Source: Federal Reserve Bank of St. Louis (FRED) · Series: ${escHtml(info.id)}</span>
+        <span>Last updated: ${(info.last_updated||'').substring(0,10)||'—'}</span>
+      </div>
+    </div>`;
+
+  document.getElementById('dlBtn').disabled  = false;
+  document.getElementById('pdfBtn').disabled = false;
+
+  const isBar  = type === 'bar';
+  const BAIRD_BLUE = '#1a3668';
+
+  chartInst = new Chart(document.getElementById('chartCanvas').getContext('2d'), {
+    type: isBar ? 'bar' : 'line',
+    data: {
+      labels: displayLbls,
+      datasets: [{
+        label: info.title,
+        data: vs,
+        borderColor: BAIRD_BLUE,
+        backgroundColor: isBar ? 'rgba(26,54,104,0.80)' : 'rgba(26,54,104,0.08)',
+        borderWidth: isBar ? 0 : 2.5,
+        pointRadius: 0,
+        pointHoverRadius: 5,
+        pointHoverBackgroundColor: BAIRD_BLUE,
+        tension: 0.25,
+        fill: !isBar,
+        borderRadius: isBar ? 2 : 0,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 300 },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#fff',
+          titleColor: '#6b7280',
+          bodyColor: BAIRD_BLUE,
+          borderColor: '#dde1ea',
+          borderWidth: 1,
+          padding: 10,
+          titleFont: { family: 'Arial', size: 12, weight: '400' },
+          bodyFont:  { family: 'Arial', size: 14, weight: '700' },
+          callbacks: {
+            title: items => items[0].label,
+            label: item  => `${fmt(item.raw)}  ${info.units_short||''}`,
+          }
+        },
+      },
+      scales: {
+        x: {
+          ticks: {
+            font: { family: 'Arial', size: 13 },
+            color: '#4b5563',
+            maxTicksLimit: 10,
+            maxRotation: 0,
+          },
+          grid: { color: '#f0f1f5' },
+          border: { color: '#dde1ea' },
+        },
+        y: {
+          ticks: {
+            font: { family: 'Arial', size: 13 },
+            color: '#4b5563',
+            callback: v => fmt(v),
+          },
+          grid: { color: '#f0f1f5' },
+          border: { color: '#dde1ea' },
+        }
+      }
+    }
+  });
+}
+
+// ── CSV download ───────────────────────────────────────────────────────────
+function dlCSV() {
+  if (!csvData||!csvMeta) return;
+  const rows = ['Date,Value', ...csvData.map(d=>`${d.date},${d.value}`)];
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([rows.join('\n')],{type:'text/csv'}));
+  a.download = `FRED_${csvMeta.id}_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
+// ── PDF export ─────────────────────────────────────────────────────────────
+async function dlPDF() {
+  if (!chartInst || !csvMeta) return;
+
+  const btn = document.getElementById('pdfBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Generating…';
+
+  try {
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+    const PW = 297, PH = 210; // A4 landscape mm
+    const MARGIN = 14;
+
+    // ── Header bar ──
+    pdf.setFillColor(26, 54, 104);
+    pdf.rect(0, 0, PW, 18, 'F');
+    pdf.setFont('helvetica','bold');
+    pdf.setFontSize(13);
+    pdf.setTextColor(255,255,255);
+    pdf.text('FRED Data Explorer — Baird Research Tools', MARGIN, 12);
+
+    // ── Baird logo (image fetch) ──
+    try {
+      const logoResp = await fetch('https://www.rwbaird.com/globalassets/baird-logo-2022.svg');
+      // SVG logos need to be rasterised; we skip embedding and write text instead
+    } catch(e) {}
+    // Write "BAIRD" text as substitute in top-right
+    pdf.setFont('helvetica','bold');
+    pdf.setFontSize(14);
+    pdf.setTextColor(255,255,255);
+    pdf.text('BAIRD', PW - MARGIN, 12, { align: 'right' });
+
+    // ── Chart title ──
+    pdf.setFont('helvetica','bold');
+    pdf.setFontSize(14);
+    pdf.setTextColor(26,54,104);
+    pdf.text(csvMeta.title || '', MARGIN, 28);
+
+    // Subtitle
+    const freqEl  = document.getElementById('freq');
+    const freqTxt = freqEl.value ? freqEl.selectedOptions[0].text : (csvMeta.frequency||'');
+    const uLabel  = unitsLabel(document.getElementById('units').value, csvMeta.units);
+    pdf.setFont('helvetica','normal');
+    pdf.setFontSize(9);
+    pdf.setTextColor(107,114,128);
+    pdf.text(`${csvMeta.id}  ·  ${uLabel}  ·  ${freqTxt}  ·  ${csvMeta.seasonal_adjustment_short||''}`, MARGIN, 34);
+
+    // ── Stats row ──
+    const stats = [
+      { l:'Latest Value',  v: fmt(parseFloat(csvData[csvData.length-1].value)) },
+      { l:'Period High',   v: fmt(Math.max(...csvData.map(d=>parseFloat(d.value)))) },
+      { l:'Period Low',    v: fmt(Math.min(...csvData.map(d=>parseFloat(d.value)))) },
+      { l:'Observations',  v: csvData.length.toLocaleString() },
+      { l:'Date Range',    v: toMmmYY(csvData[0].date)+' – '+toMmmYY(csvData[csvData.length-1].date) },
+    ];
+    const sw = (PW - MARGIN*2) / stats.length;
+    stats.forEach((s,i) => {
+      const x = MARGIN + i*sw;
+      pdf.setFont('helvetica','bold'); pdf.setFontSize(7); pdf.setTextColor(107,114,128);
+      pdf.text(s.l.toUpperCase(), x, 42);
+      pdf.setFont('helvetica','bold'); pdf.setFontSize(12); pdf.setTextColor(26,54,104);
+      pdf.text(s.v, x, 49);
+    });
+
+    // ── Chart image ──
+    const canvas = document.getElementById('chartCanvas');
+    const imgData = canvas.toDataURL('image/png', 1.0);
+    const chartY = 55, chartH = PH - chartY - 16;
+    pdf.addImage(imgData, 'PNG', MARGIN, chartY, PW - MARGIN*2, chartH);
+
+    // ── Footer ──
+    pdf.setFont('helvetica','normal');
+    pdf.setFontSize(7);
+    pdf.setTextColor(156,163,175);
+    pdf.text(`Source: Federal Reserve Bank of St. Louis (FRED)  ·  Series: ${csvMeta.id}  ·  Generated ${new Date().toLocaleDateString()}`, MARGIN, PH-4);
+    pdf.text('© Robert W. Baird & Co.', PW-MARGIN, PH-4, { align: 'right' });
+
+    pdf.save(`FRED_${csvMeta.id}_${new Date().toISOString().slice(0,10)}.pdf`);
+
+  } catch(err) {
+    alert('PDF generation failed: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⬇ PDF';
+  }
+}
+</script>
+</body>
+</html>
